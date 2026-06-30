@@ -1,0 +1,86 @@
+name: Publish GitHub Package
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - closed
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+  pages: write
+  id-token: write
+
+jobs:
+  publish:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://npm.pkg.github.com
+          scope: "@krafton-jungle-project-4team"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Set date-based package version
+        run: |
+          version_date="$(TZ=Asia/Seoul date +'%Y%m%d')"
+          version="0.1.${version_date}-run.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+          npm version "$version" --no-git-tag-version
+          echo "Publishing @krafton-jungle-project-4team/loop-ad_advertisement_sdk@$version"
+
+      - name: Verify
+        run: npm run verify
+
+      - name: Publish to GitHub Packages
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare script tag bundle
+        run: |
+          mkdir -p public
+          cp dist/loop-ad-advertisement-sdk.iife.js public/loop-ad-advertisement-sdk.iife.js
+          cp dist/loop-ad-advertisement-sdk.iife.js.map public/loop-ad-advertisement-sdk.iife.js.map
+          printf '%s\n' \
+            '<!doctype html>' \
+            '<html lang="en">' \
+            '  <head>' \
+            '    <meta charset="utf-8" />' \
+            '    <title>Loop Ad Advertisement SDK</title>' \
+            '  </head>' \
+            '  <body>' \
+            '    <p>Loop Ad Advertisement SDK browser bundle</p>' \
+            '    <script src="./loop-ad-advertisement-sdk.iife.js"></script>' \
+            '  </body>' \
+            '</html>' \
+            > public/index.html
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: public
+
+      - name: Deploy script bundle to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

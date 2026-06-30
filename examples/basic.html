@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Loop Ad Advertisement SDK Example</title>
+        <style>
+            #loopad-main-banner {
+                max-width: 720px;
+                margin: 24px auto;
+                font-family: system-ui, sans-serif;
+            }
+
+            .loopad-ad-link {
+                display: grid;
+                gap: 8px;
+                color: inherit;
+                text-decoration: none;
+            }
+
+            .loopad-ad-image {
+                width: 100%;
+                height: auto;
+                display: block;
+            }
+        </style>
+    </head>
+    <body>
+        <div id="loopad-main-banner"></div>
+
+        <script src="../dist/loop-ad-advertisement-sdk.iife.js"></script>
+        <script>
+            const ads = LoopAdAdvertisementSDK.init({
+                apiBaseUrl: "https://dashboard.dev.loop-ad.org/api",
+                projectId: "demo-shop",
+                userId: "user-123"
+            });
+
+            ads.render({
+                placementKey: "C1_MAIN_TOP",
+                targetId: "loopad-main-banner",
+                onImpression(decision) {
+                    console.log("ad impression", decision.tracking);
+                },
+                onClick(decision) {
+                    console.log("ad click", decision.tracking);
+                }
+            });
+        </script>
+    </body>
+</html>

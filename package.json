@@ -1,0 +1,41 @@
+{
+    "name": "@krafton-jungle-project-4team/loop-ad_advertisement_sdk",
+    "version": "0.1.0",
+    "description": "Loop Ad browser advertisement SDK for public ad serving and DOM rendering.",
+    "type": "module",
+    "sideEffects": false,
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/krafton-jungle-project-4team/loop-ad_advertisement_sdk.git"
+    },
+    "publishConfig": {
+        "registry": "https://npm.pkg.github.com"
+    },
+    "main": "./dist/index.cjs",
+    "module": "./dist/index.mjs",
+    "types": "./dist/types/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/types/index.d.ts",
+            "import": "./dist/index.mjs",
+            "require": "./dist/index.cjs"
+        }
+    },
+    "files": [
+        "dist",
+        "README.md"
+    ],
+    "scripts": {
+        "build": "node scripts/build.mjs && tsc -p tsconfig.build.json --emitDeclarationOnly",
+        "typecheck": "tsc --noEmit",
+        "test": "node --test tests/*.test.mjs",
+        "verify": "npm run typecheck && npm run build && npm test"
+    },
+    "devDependencies": {
+        "esbuild": "^0.25.5",
+        "typescript": "^5.8.3"
+    },
+    "engines": {
+        "node": ">=20"
+    }
+}
