@@ -88,7 +88,7 @@ function trackAdClick(decision: AdvertisementFilledDecision): void {
 }
 
 const ads = init({
-  apiBaseUrl: "https://dashboard.dev.loop-ad.org/api",
+  apiBaseUrl: "https://dashboard.api.dev.loop-ad.org/api",
   projectId: "demo-shoppingmall",
   userId: user.id
 });
@@ -153,7 +153,7 @@ GitHub Pages로 배포된 IIFE bundle을 직접 불러올 수 있습니다.
 <script src="https://krafton-jungle-project-4team.github.io/loop-ad_advertisement_sdk/loop-ad-advertisement-sdk.iife.js"></script>
 <script>
   const ads = LoopAdAdvertisementSDK.init({
-    apiBaseUrl: "https://dashboard.dev.loop-ad.org/api",
+    apiBaseUrl: "https://dashboard.api.dev.loop-ad.org/api",
     projectId: "demo-shoppingmall",
     userId: "user-123"
   });

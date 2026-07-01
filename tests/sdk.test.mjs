@@ -62,7 +62,7 @@ test("exports init and unwraps the API envelope", async () => {
     assert.equal(typeof version, "string");
 
     client = init({
-        apiBaseUrl: "https://dashboard.dev.loop-ad.org/api/",
+        apiBaseUrl: "https://dashboard.api.dev.loop-ad.org/api/",
         projectId: "demo-shop",
         userId: "user-123"
     });
@@ -72,7 +72,7 @@ test("exports init and unwraps the API envelope", async () => {
         targetId: "loopad-main-banner"
     });
 
-    assert.equal(requests[0].url, "https://dashboard.dev.loop-ad.org/api/ads/serve");
+    assert.equal(requests[0].url, "https://dashboard.api.dev.loop-ad.org/api/ads/serve");
     assert.equal(requests[0].method, "POST");
     assert.equal(requests[0].credentials, "omit");
     assert.equal(requests[0].body.projectId, "demo-shop");
@@ -102,7 +102,7 @@ test("handles empty decisions by clearing the target without callbacks", async (
     });
 
     client = init({
-        apiBaseUrl: "https://dashboard.dev.loop-ad.org/api",
+        apiBaseUrl: "https://dashboard.api.dev.loop-ad.org/api",
         projectId: "demo-shop",
         userId: "user-123"
     });
@@ -122,7 +122,7 @@ test("handles empty decisions by clearing the target without callbacks", async (
 
 test("renders minimal DOM nodes with tracking data attributes", async () => {
     client = init({
-        apiBaseUrl: "https://dashboard.dev.loop-ad.org/api",
+        apiBaseUrl: "https://dashboard.api.dev.loop-ad.org/api",
         projectId: "demo-shop",
         userId: "user-123"
     });
@@ -155,7 +155,7 @@ test("fires impression once after at least half the ad is visible", async () => 
     const impressions = [];
 
     client = init({
-        apiBaseUrl: "https://dashboard.dev.loop-ad.org/api",
+        apiBaseUrl: "https://dashboard.api.dev.loop-ad.org/api",
         projectId: "demo-shop",
         userId: "user-123"
     });
@@ -182,7 +182,7 @@ test("falls back to one immediate impression when IntersectionObserver is unavai
     let impressions = 0;
 
     client = init({
-        apiBaseUrl: "https://dashboard.dev.loop-ad.org/api",
+        apiBaseUrl: "https://dashboard.api.dev.loop-ad.org/api",
         projectId: "demo-shop",
         userId: "user-123"
     });
@@ -202,7 +202,7 @@ test("calls click callback before assigning the landing URL", async () => {
     const clicks = [];
 
     client = init({
-        apiBaseUrl: "https://dashboard.dev.loop-ad.org/api",
+        apiBaseUrl: "https://dashboard.api.dev.loop-ad.org/api",
         projectId: "demo-shop",
         userId: "user-123"
     });
