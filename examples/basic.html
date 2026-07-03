@@ -17,12 +17,6 @@
                 color: inherit;
                 text-decoration: none;
             }
-
-            .loopad-ad-image {
-                width: 100%;
-                height: auto;
-                display: block;
-            }
         </style>
     </head>
     <body>
@@ -32,18 +26,19 @@
         <script>
             const ads = LoopAdAdvertisementSDK.init({
                 apiBaseUrl: "https://dashboard.api.dev.loop-ad.org/api",
-                projectId: "demo-shop",
-                userId: "user-123"
+                projectId: "hotel-client-a",
+                userId: "user-123",
+                promotionRunId: "promotion-run-1"
             });
 
             ads.render({
-                placementKey: "C1_MAIN_TOP",
+                placementId: "C1_MAIN_TOP",
                 targetId: "loopad-main-banner",
                 onImpression(decision) {
-                    console.log("ad impression", decision.tracking);
+                    console.log("promotion impression", decision.tracking);
                 },
                 onClick(decision) {
-                    console.log("ad click", decision.tracking);
+                    console.log("promotion click", decision.tracking);
                 }
             });
         </script>

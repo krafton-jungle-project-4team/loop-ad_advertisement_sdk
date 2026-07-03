@@ -2,6 +2,7 @@ export interface InitOptions {
     apiBaseUrl: string;
     projectId: string;
     userId: string;
+    promotionRunId: string;
     debug?: boolean | null;
 }
 
@@ -11,13 +12,24 @@ export interface RenderContext {
     [key: string]: string | number | boolean | null | undefined;
 }
 
-export interface RenderOptions {
-    placementKey: string;
+interface BaseRenderOptions {
     targetId: string;
     context?: RenderContext | null;
     onImpression?: ((decision: AdvertisementFilledDecision) => void) | null;
     onClick?: ((decision: AdvertisementFilledDecision) => void) | null;
 }
+
+export type RenderOptions = BaseRenderOptions &
+    (
+        | {
+              placementId: string;
+              placementKey?: string | null;
+          }
+        | {
+              placementId?: string | null;
+              placementKey: string;
+          }
+    );
 
 export interface AdvertisementClient {
     render(options: RenderOptions): Promise<AdvertisementDecision>;
@@ -25,25 +37,29 @@ export interface AdvertisementClient {
 }
 
 export interface ServedAdCreative {
-    creativeId: string;
-    contentType: string;
     title: string;
     body: string;
-    ctaLabel: string;
-    imageUrl: string;
-    landingUrl: string;
+    cta: string;
+    targetUrl: string;
 }
 
 export interface ServedAdTracking {
-    projectId: string;
-    experimentId: string;
-    variantId: string;
-    creativeId: string;
-    mappingId: string;
-    actionId: string;
+    project_id: string;
+    user_id: string;
+    campaign_id: string;
+    promotion_id: string;
+    promotion_run_id: string;
+    ad_experiment_id: string;
+    segment_id: string;
+    content_id: string;
+    content_option_id: string;
+    promotion_channel: "onsite_banner";
+    placement_id: string;
+    target_url: string;
 }
 
 export interface AdvertisementFilledDecision {
+    placementId: string;
     placementKey: string;
     status: "filled";
     ad: ServedAdCreative;
@@ -51,6 +67,7 @@ export interface AdvertisementFilledDecision {
 }
 
 export interface AdvertisementEmptyDecision {
+    placementId: string;
     placementKey: string;
     status: "empty";
     ad: null;
@@ -103,26 +120,27 @@ class Runtime {
             throw new Error("LoopAdAdvertisementSDK requires fetch.");
         }
 
-        const response = await fetch(`${this.config.apiBaseUrl}/ads/serve`, {
-            method: "POST",
+        const response = await fetch(buildBannerResolveUrl(this.config, options), {
+            method: "GET",
             headers: {
-                Accept: "application/json",
-                "Content-Type": "application/json"
+                Accept: "application/json"
             },
-            credentials: "omit",
-            body: JSON.stringify({
-                projectId: this.config.projectId,
-                userId: this.config.userId,
-                placementKey: options.placementKey,
-                context: requestContext(options.context)
-            })
+            credentials: "omit"
         });
+        const payload: unknown = await response.json();
 
         if (!response.ok) {
+            if (
+                response.status === 404 &&
+                apiErrorCode(payload) === "BANNER_ASSIGNMENT_NOT_FOUND"
+            ) {
+                return emptyDecision(options.placementId);
+            }
+
             throw new Error(`LoopAdAdvertisementSDK ad request failed with ${response.status}.`);
         }
 
-        return unwrapEnvelope(await response.json());
+        return normalizeDecision(unwrapEnvelope(payload));
     }
 
     private clearTarget(targetId: string, target: HTMLElement): void {
@@ -144,13 +162,13 @@ interface NormalizedInitOptions {
     apiBaseUrl: string;
     projectId: string;
     userId: string;
+    promotionRunId: string;
     debug: boolean;
 }
 
 interface NormalizedRenderOptions {
-    placementKey: string;
+    placementId: string;
     targetId: string;
-    context: RenderContext;
     onImpression: ((decision: AdvertisementFilledDecision) => void) | null;
     onClick: ((decision: AdvertisementFilledDecision) => void) | null;
 }
@@ -159,20 +177,23 @@ function normalizeInitOptions(options: InitOptions): NormalizedInitOptions {
     const apiBaseUrl = trimTrailingSlash(requiredText(options?.apiBaseUrl, "apiBaseUrl"));
     const projectId = requiredText(options?.projectId, "projectId");
     const userId = requiredText(options?.userId, "userId");
+    const promotionRunId = requiredText(options?.promotionRunId, "promotionRunId");
 
     return {
         apiBaseUrl,
         projectId,
         userId,
+        promotionRunId,
         debug: options.debug ?? false
     };
 }
 
 function normalizeRenderOptions(options: RenderOptions): NormalizedRenderOptions {
+    const placementId = optionalText(options?.placementId) || optionalText(options?.placementKey);
+
     return {
-        placementKey: requiredText(options?.placementKey, "placementKey"),
+        placementId: requiredText(placementId, "placementId"),
         targetId: requiredText(options?.targetId, "targetId"),
-        context: cleanContext(options.context ?? {}),
         onImpression: options.onImpression ?? null,
         onClick: options.onClick ?? null
     };
@@ -198,16 +219,9 @@ function createAdAnchor(
 ): HTMLAnchorElement {
     const anchor = document.createElement("a");
     anchor.className = "loopad-ad-link";
-    anchor.href = decision.ad.landingUrl || "#";
+    anchor.href = decision.ad.targetUrl || "#";
     anchor.setAttribute("aria-label", decision.ad.title);
     applyTrackingAttributes(anchor, decision);
-
-    const image = document.createElement("img");
-    image.className = "loopad-ad-image";
-    image.alt = decision.ad.title;
-    if (decision.ad.imageUrl) {
-        image.src = decision.ad.imageUrl;
-    }
 
     const title = document.createElement("strong");
     title.className = "loopad-ad-title";
@@ -219,9 +233,8 @@ function createAdAnchor(
 
     const cta = document.createElement("span");
     cta.className = "loopad-ad-cta";
-    cta.textContent = decision.ad.ctaLabel;
+    cta.textContent = decision.ad.cta;
 
-    anchor.appendChild(image);
     anchor.appendChild(title);
     anchor.appendChild(body);
     anchor.appendChild(cta);
@@ -230,8 +243,8 @@ function createAdAnchor(
         event.preventDefault();
         options.onClick?.(decision);
 
-        if (decision.ad.landingUrl && typeof window !== "undefined") {
-            window.location.assign(decision.ad.landingUrl);
+        if (decision.ad.targetUrl && typeof window !== "undefined") {
+            window.location.assign(decision.ad.targetUrl);
         }
     });
 
@@ -243,13 +256,18 @@ function applyTrackingAttributes(
     decision: AdvertisementFilledDecision
 ): void {
     const attributes = {
-        "data-loopad-placement-key": decision.placementKey,
-        "data-loopad-project-id": decision.tracking.projectId,
-        "data-loopad-experiment-id": decision.tracking.experimentId,
-        "data-loopad-variant-id": decision.tracking.variantId,
-        "data-loopad-creative-id": decision.tracking.creativeId,
-        "data-loopad-mapping-id": decision.tracking.mappingId,
-        "data-loopad-action-id": decision.tracking.actionId
+        "data-loopad-placement-id": decision.tracking.placement_id,
+        "data-loopad-project-id": decision.tracking.project_id,
+        "data-loopad-user-id": decision.tracking.user_id,
+        "data-loopad-campaign-id": decision.tracking.campaign_id,
+        "data-loopad-promotion-id": decision.tracking.promotion_id,
+        "data-loopad-promotion-run-id": decision.tracking.promotion_run_id,
+        "data-loopad-ad-experiment-id": decision.tracking.ad_experiment_id,
+        "data-loopad-segment-id": decision.tracking.segment_id,
+        "data-loopad-content-id": decision.tracking.content_id,
+        "data-loopad-content-option-id": decision.tracking.content_option_id,
+        "data-loopad-promotion-channel": decision.tracking.promotion_channel,
+        "data-loopad-target-url": decision.tracking.target_url
     };
 
     for (const [name, value] of Object.entries(attributes)) {
@@ -300,111 +318,94 @@ function observeImpression(
     return () => observer?.disconnect();
 }
 
-function unwrapEnvelope(value: unknown): AdvertisementDecision {
+function buildBannerResolveUrl(
+    config: NormalizedInitOptions,
+    options: NormalizedRenderOptions
+): string {
+    const query = new URLSearchParams({
+        project_id: config.projectId,
+        promotion_run_id: config.promotionRunId,
+        user_id: config.userId,
+        placement_id: options.placementId
+    });
+
+    return `${config.apiBaseUrl}/ad/banner/resolve?${query.toString()}`;
+}
+
+function unwrapEnvelope(value: unknown): unknown {
     if (!isRecord(value) || !("data" in value)) {
         throw new Error("LoopAdAdvertisementSDK received an invalid API envelope.");
     }
 
-    return normalizeDecision(value.data);
+    return value.data;
 }
 
 function normalizeDecision(value: unknown): AdvertisementDecision {
     if (!isRecord(value)) {
-        throw new Error("LoopAdAdvertisementSDK received an invalid ad decision.");
+        throw new Error("LoopAdAdvertisementSDK received an invalid banner resolve response.");
     }
 
-    const placementKey = requiredText(value.placementKey, "placementKey");
-    const status = requiredText(value.status, "status");
-
-    if (status === "empty") {
-        return {
-            placementKey,
-            status,
-            ad: null,
-            tracking: null
-        };
-    }
-
-    if (status !== "filled") {
-        throw new Error(`LoopAdAdvertisementSDK received unsupported status '${status}'.`);
-    }
+    const placementId = requiredText(value.placement_id, "placement_id");
 
     return {
-        placementKey,
-        status,
-        ad: normalizeCreative(value.ad),
-        tracking: normalizeTracking(value.tracking)
+        placementId,
+        placementKey: placementId,
+        status: "filled",
+        ad: normalizeCreative(value),
+        tracking: normalizeTracking(value)
     };
 }
 
-function normalizeCreative(value: unknown): ServedAdCreative {
-    if (!isRecord(value)) {
-        throw new Error("LoopAdAdvertisementSDK received an invalid creative.");
-    }
-
+function emptyDecision(placementId: string): AdvertisementEmptyDecision {
     return {
-        creativeId: requiredText(value.creativeId, "creativeId"),
-        contentType: requiredText(value.contentType, "contentType"),
+        placementId,
+        placementKey: placementId,
+        status: "empty",
+        ad: null,
+        tracking: null
+    };
+}
+
+function normalizeCreative(value: Record<string, unknown>): ServedAdCreative {
+    return {
         title: requiredText(value.title, "title"),
-        body: optionalText(value.body),
-        ctaLabel: optionalText(value.ctaLabel),
-        imageUrl: optionalText(value.imageUrl),
-        landingUrl: optionalText(value.landingUrl)
+        body: requiredText(value.body, "body"),
+        cta: requiredText(value.cta, "cta"),
+        targetUrl: requiredText(value.target_url, "target_url")
     };
 }
 
-function normalizeTracking(value: unknown): ServedAdTracking {
-    if (!isRecord(value)) {
-        throw new Error("LoopAdAdvertisementSDK received invalid tracking.");
+function normalizeTracking(value: Record<string, unknown>): ServedAdTracking {
+    const promotionChannel = requiredText(value.promotion_channel, "promotion_channel");
+
+    if (promotionChannel !== "onsite_banner") {
+        throw new Error(
+            `LoopAdAdvertisementSDK received unsupported promotion_channel '${promotionChannel}'.`
+        );
     }
 
     return {
-        projectId: requiredText(value.projectId, "projectId"),
-        experimentId: optionalText(value.experimentId),
-        variantId: optionalText(value.variantId),
-        creativeId: optionalText(value.creativeId),
-        mappingId: optionalText(value.mappingId),
-        actionId: optionalText(value.actionId)
+        project_id: requiredText(value.project_id, "project_id"),
+        user_id: requiredText(value.user_id, "user_id"),
+        campaign_id: requiredText(value.campaign_id, "campaign_id"),
+        promotion_id: requiredText(value.promotion_id, "promotion_id"),
+        promotion_run_id: requiredText(value.promotion_run_id, "promotion_run_id"),
+        ad_experiment_id: requiredText(value.ad_experiment_id, "ad_experiment_id"),
+        segment_id: requiredText(value.segment_id, "segment_id"),
+        content_id: requiredText(value.content_id, "content_id"),
+        content_option_id: requiredText(value.content_option_id, "content_option_id"),
+        promotion_channel: promotionChannel,
+        placement_id: requiredText(value.placement_id, "placement_id"),
+        target_url: requiredText(value.target_url, "target_url")
     };
 }
 
-function requestContext(context: RenderContext): RenderContext {
-    return {
-        pageUrl: currentPageUrl(),
-        device: detectDevice(),
-        ...context
-    };
-}
-
-function cleanContext(context: RenderContext): RenderContext {
-    return Object.fromEntries(
-        Object.entries(context).filter((entry): entry is [string, string | number | boolean | null] => {
-            const value = entry[1];
-
-            return (
-                value === null ||
-                typeof value === "string" ||
-                typeof value === "number" ||
-                typeof value === "boolean"
-            );
-        })
-    );
-}
-
-function currentPageUrl(): string {
-    if (typeof location === "undefined") {
+function apiErrorCode(value: unknown): string {
+    if (!isRecord(value) || !isRecord(value.error)) {
         return "";
     }
 
-    return location.pathname || location.href || "";
-}
-
-function detectDevice(): string {
-    if (typeof navigator === "undefined") {
-        return "";
-    }
-
-    return /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) ? "mobile" : "desktop";
+    return optionalText(value.error.code);
 }
 
 function trimTrailingSlash(value: string): string {
