@@ -6,46 +6,21 @@ export interface InitOptions {
     debug?: boolean | null;
 }
 
-export interface RenderContext {
-    pageUrl?: string | null;
-    device?: string | null;
-    [key: string]: string | number | boolean | null | undefined;
-}
-
-interface BaseRenderOptions {
+export interface RenderOptions {
+    placementId: string;
     targetId: string;
-    context?: RenderContext | null;
-    onImpression?: ((decision: AdvertisementFilledDecision) => void) | null;
-    onClick?: ((decision: AdvertisementFilledDecision) => void) | null;
+    on_loaded?: ((event: { attribution: LoopAdAttribution }) => void) | null;
+    on_viewable?: ((event: { attribution: LoopAdAttribution }) => void) | null;
+    on_click?: ((event: { attribution: LoopAdAttribution; click_url: string }) => void) | null;
 }
-
-export type RenderOptions = BaseRenderOptions &
-    (
-        | {
-              placementId: string;
-              placementKey?: string | null;
-          }
-        | {
-              placementId?: string | null;
-              placementKey: string;
-          }
-    );
 
 export interface AdvertisementClient {
     render(options: RenderOptions): Promise<AdvertisementDecision>;
     destroy(): void;
 }
 
-export interface ServedAdCreative {
-    title: string;
-    body: string;
-    cta: string;
-    targetUrl: string;
-}
-
-export interface ServedAdTracking {
+export interface LoopAdAttribution {
     project_id: string;
-    user_id: string;
     campaign_id: string;
     promotion_id: string;
     promotion_run_id: string;
@@ -53,25 +28,39 @@ export interface ServedAdTracking {
     segment_id: string;
     content_id: string;
     content_option_id: string;
+    creative_id: string;
     promotion_channel: "onsite_banner";
-    placement_id: string;
     target_url: string;
+    placement_id?: string;
+    redirect_id?: string;
+}
+
+export interface BannerCreative {
+    creative_id: string;
+    creative_format: "banner_html";
+    html_url: string;
+    width: number;
+    height: number;
+    click_url: string;
+    target_url: string;
+    sandbox: {
+        allow_scripts: true;
+        allow_same_origin: false;
+        allow_popups: boolean;
+    };
 }
 
 export interface AdvertisementFilledDecision {
-    placementId: string;
-    placementKey: string;
     status: "filled";
-    ad: ServedAdCreative;
-    tracking: ServedAdTracking;
+    placementId: string;
+    creative: BannerCreative;
+    attribution: LoopAdAttribution;
 }
 
 export interface AdvertisementEmptyDecision {
-    placementId: string;
-    placementKey: string;
     status: "empty";
-    ad: null;
-    tracking: null;
+    placementId: string;
+    reason: "assignment_not_found" | "artifact_not_ready" | "artifact_failed";
 }
 
 export type AdvertisementDecision = AdvertisementFilledDecision | AdvertisementEmptyDecision;
@@ -106,10 +95,14 @@ class Runtime {
             return decision;
         }
 
-        const anchor = createAdAnchor(decision, renderOptions);
-        target.appendChild(anchor);
+        const iframe = createBannerIframe(decision);
+        target.appendChild(iframe);
 
-        const cleanup = observeImpression(anchor, decision, renderOptions.onImpression);
+        const cleanup = combineCleanups(
+            observeIframeLoad(iframe, decision, renderOptions.on_loaded),
+            observeViewability(iframe, decision, renderOptions.on_viewable),
+            observeClickMessage(decision, renderOptions.on_click)
+        );
         this.cleanups.set(renderOptions.targetId, cleanup);
 
         return decision;
@@ -130,13 +123,6 @@ class Runtime {
         const payload: unknown = await response.json();
 
         if (!response.ok) {
-            if (
-                response.status === 404 &&
-                apiErrorCode(payload) === "BANNER_ASSIGNMENT_NOT_FOUND"
-            ) {
-                return emptyDecision(options.placementId);
-            }
-
             throw new Error(`LoopAdAdvertisementSDK ad request failed with ${response.status}.`);
         }
 
@@ -169,8 +155,9 @@ interface NormalizedInitOptions {
 interface NormalizedRenderOptions {
     placementId: string;
     targetId: string;
-    onImpression: ((decision: AdvertisementFilledDecision) => void) | null;
-    onClick: ((decision: AdvertisementFilledDecision) => void) | null;
+    on_loaded: ((event: { attribution: LoopAdAttribution }) => void) | null;
+    on_viewable: ((event: { attribution: LoopAdAttribution }) => void) | null;
+    on_click: ((event: { attribution: LoopAdAttribution; click_url: string }) => void) | null;
 }
 
 function normalizeInitOptions(options: InitOptions): NormalizedInitOptions {
@@ -189,13 +176,12 @@ function normalizeInitOptions(options: InitOptions): NormalizedInitOptions {
 }
 
 function normalizeRenderOptions(options: RenderOptions): NormalizedRenderOptions {
-    const placementId = optionalText(options?.placementId) || optionalText(options?.placementKey);
-
     return {
-        placementId: requiredText(placementId, "placementId"),
+        placementId: requiredText(options?.placementId, "placementId"),
         targetId: requiredText(options?.targetId, "targetId"),
-        onImpression: options.onImpression ?? null,
-        onClick: options.onClick ?? null
+        on_loaded: options.on_loaded ?? null,
+        on_viewable: options.on_viewable ?? null,
+        on_click: options.on_click ?? null
     };
 }
 
@@ -213,109 +199,142 @@ function targetElement(targetId: string): HTMLElement {
     return target;
 }
 
-function createAdAnchor(
-    decision: AdvertisementFilledDecision,
-    options: NormalizedRenderOptions
-): HTMLAnchorElement {
-    const anchor = document.createElement("a");
-    anchor.className = "loopad-ad-link";
-    anchor.href = decision.ad.targetUrl || "#";
-    anchor.setAttribute("aria-label", decision.ad.title);
-    applyTrackingAttributes(anchor, decision);
-
-    const title = document.createElement("strong");
-    title.className = "loopad-ad-title";
-    title.textContent = decision.ad.title;
-
-    const body = document.createElement("span");
-    body.className = "loopad-ad-body";
-    body.textContent = decision.ad.body;
-
-    const cta = document.createElement("span");
-    cta.className = "loopad-ad-cta";
-    cta.textContent = decision.ad.cta;
-
-    anchor.appendChild(title);
-    anchor.appendChild(body);
-    anchor.appendChild(cta);
-
-    anchor.addEventListener("click", (event) => {
-        event.preventDefault();
-        options.onClick?.(decision);
-
-        if (decision.ad.targetUrl && typeof window !== "undefined") {
-            window.location.assign(decision.ad.targetUrl);
-        }
-    });
-
-    return anchor;
+function createBannerIframe(decision: AdvertisementFilledDecision): HTMLIFrameElement {
+    const iframe = document.createElement("iframe");
+    iframe.className = "loopad-ad-frame";
+    iframe.src = decision.creative.html_url;
+    iframe.width = String(decision.creative.width);
+    iframe.height = String(decision.creative.height);
+    iframe.setAttribute("title", "LoopAd advertisement");
+    iframe.setAttribute("loading", "lazy");
+    iframe.setAttribute("referrerpolicy", "no-referrer");
+    iframe.setAttribute("sandbox", sandboxTokens(decision.creative.sandbox));
+    iframe.setAttribute("data-loopad-placement-id", decision.placementId);
+    iframe.setAttribute("data-loopad-project-id", decision.attribution.project_id);
+    iframe.setAttribute("data-loopad-campaign-id", decision.attribution.campaign_id);
+    iframe.setAttribute("data-loopad-promotion-id", decision.attribution.promotion_id);
+    iframe.setAttribute("data-loopad-promotion-run-id", decision.attribution.promotion_run_id);
+    iframe.setAttribute("data-loopad-ad-experiment-id", decision.attribution.ad_experiment_id);
+    iframe.setAttribute("data-loopad-segment-id", decision.attribution.segment_id);
+    iframe.setAttribute("data-loopad-content-id", decision.attribution.content_id);
+    iframe.setAttribute("data-loopad-content-option-id", decision.attribution.content_option_id);
+    iframe.setAttribute("data-loopad-creative-id", decision.attribution.creative_id);
+    iframe.setAttribute("data-loopad-channel", decision.attribution.promotion_channel);
+    iframe.setAttribute("data-loopad-target-url", decision.attribution.target_url);
+    return iframe;
 }
 
-function applyTrackingAttributes(
-    anchor: HTMLAnchorElement,
-    decision: AdvertisementFilledDecision
-): void {
-    const attributes = {
-        "data-loopad-placement-id": decision.tracking.placement_id,
-        "data-loopad-project-id": decision.tracking.project_id,
-        "data-loopad-user-id": decision.tracking.user_id,
-        "data-loopad-campaign-id": decision.tracking.campaign_id,
-        "data-loopad-promotion-id": decision.tracking.promotion_id,
-        "data-loopad-promotion-run-id": decision.tracking.promotion_run_id,
-        "data-loopad-ad-experiment-id": decision.tracking.ad_experiment_id,
-        "data-loopad-segment-id": decision.tracking.segment_id,
-        "data-loopad-content-id": decision.tracking.content_id,
-        "data-loopad-content-option-id": decision.tracking.content_option_id,
-        "data-loopad-promotion-channel": decision.tracking.promotion_channel,
-        "data-loopad-target-url": decision.tracking.target_url
-    };
-
-    for (const [name, value] of Object.entries(attributes)) {
-        anchor.setAttribute(name, value);
+function sandboxTokens(sandbox: BannerCreative["sandbox"]): string {
+    const tokens = [];
+    if (sandbox.allow_scripts) {
+        tokens.push("allow-scripts");
     }
+    if (sandbox.allow_same_origin) {
+        tokens.push("allow-same-origin");
+    }
+    if (sandbox.allow_popups) {
+        tokens.push("allow-popups");
+    }
+    return tokens.join(" ");
 }
 
-function observeImpression(
+function observeIframeLoad(
+    iframe: HTMLIFrameElement,
+    decision: AdvertisementFilledDecision,
+    callback: ((event: { attribution: LoopAdAttribution }) => void) | null
+): () => void {
+    if (!callback) {
+        return noop;
+    }
+
+    const handler = () => callback({ attribution: decision.attribution });
+    iframe.addEventListener("load", handler);
+    return () => iframe.removeEventListener("load", handler);
+}
+
+function observeViewability(
     element: HTMLElement,
     decision: AdvertisementFilledDecision,
-    callback: ((decision: AdvertisementFilledDecision) => void) | null
+    callback: ((event: { attribution: LoopAdAttribution }) => void) | null
 ): () => void {
     if (!callback) {
         return noop;
     }
 
     let fired = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
     let observer: IntersectionObserver | null = null;
+
+    const clearTimer = () => {
+        if (timer) {
+            clearTimeout(timer);
+            timer = null;
+        }
+    };
     const fire = () => {
         if (fired) {
             return;
         }
-
         fired = true;
-        callback(decision);
+        clearTimer();
+        callback({ attribution: decision.attribution });
         observer?.disconnect();
     };
 
     if (typeof IntersectionObserver !== "function") {
-        fire();
-        return noop;
+        timer = setTimeout(fire, 1000);
+        return clearTimer;
     }
 
     observer = new IntersectionObserver(
         (entries) => {
-            if (
-                entries.some(
-                    (entry) => entry.isIntersecting && entry.intersectionRatio >= 0.5
-                )
-            ) {
-                fire();
+            const viewable = entries.some(
+                (entry) => entry.isIntersecting && entry.intersectionRatio >= 0.5
+            );
+            if (viewable && !timer) {
+                timer = setTimeout(fire, 1000);
+            }
+            if (!viewable) {
+                clearTimer();
             }
         },
-        { threshold: [0.5] }
+        { threshold: [0, 0.5] }
     );
     observer.observe(element);
 
-    return () => observer?.disconnect();
+    return () => {
+        clearTimer();
+        observer?.disconnect();
+    };
+}
+
+function observeClickMessage(
+    decision: AdvertisementFilledDecision,
+    callback: ((event: { attribution: LoopAdAttribution; click_url: string }) => void) | null
+): () => void {
+    if (typeof window === "undefined") {
+        return noop;
+    }
+
+    const handler = (event: MessageEvent) => {
+        if (!isLoopAdClickMessage(event.data)) {
+            return;
+        }
+
+        callback?.({
+            attribution: decision.attribution,
+            click_url: decision.creative.click_url
+        });
+
+        window.location.assign(decision.creative.click_url);
+    };
+
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
+}
+
+function isLoopAdClickMessage(value: unknown): boolean {
+    return isRecord(value) && value.type === "loopad:click";
 }
 
 function buildBannerResolveUrl(
@@ -345,71 +364,138 @@ function normalizeDecision(value: unknown): AdvertisementDecision {
         throw new Error("LoopAdAdvertisementSDK received an invalid banner resolve response.");
     }
 
+    if (value.status === "empty") {
+        return {
+            status: "empty",
+            placementId: requiredText(value.placement_id, "placement_id"),
+            reason: normalizeEmptyReason(value.reason)
+        };
+    }
+
+    if (value.status !== "filled") {
+        throw new Error("LoopAdAdvertisementSDK received an invalid banner status.");
+    }
+
+    const creative = normalizeCreative(value.creative);
+    const attribution = normalizeAttribution(value.attribution);
     const placementId = requiredText(value.placement_id, "placement_id");
 
     return {
-        placementId,
-        placementKey: placementId,
         status: "filled",
-        ad: normalizeCreative(value),
-        tracking: normalizeTracking(value)
-    };
-}
-
-function emptyDecision(placementId: string): AdvertisementEmptyDecision {
-    return {
         placementId,
-        placementKey: placementId,
-        status: "empty",
-        ad: null,
-        tracking: null
+        creative,
+        attribution: {
+            ...attribution,
+            placement_id: attribution.placement_id ?? placementId
+        }
     };
 }
 
-function normalizeCreative(value: Record<string, unknown>): ServedAdCreative {
+function normalizeEmptyReason(value: unknown): AdvertisementEmptyDecision["reason"] {
+    if (
+        value === "assignment_not_found" ||
+        value === "artifact_not_ready" ||
+        value === "artifact_failed"
+    ) {
+        return value;
+    }
+    throw new Error("LoopAdAdvertisementSDK received an invalid empty reason.");
+}
+
+function normalizeCreative(value: unknown): BannerCreative {
+    if (!isRecord(value)) {
+        throw new Error("LoopAdAdvertisementSDK received an invalid creative.");
+    }
+    const creativeFormat = requiredText(value.creative_format, "creative.creative_format");
+    if (creativeFormat !== "banner_html") {
+        throw new Error(`LoopAdAdvertisementSDK received unsupported creative_format '${creativeFormat}'.`);
+    }
+    const sandbox = normalizeSandbox(value.sandbox);
     return {
-        title: requiredText(value.title, "title"),
-        body: requiredText(value.body, "body"),
-        cta: requiredText(value.cta, "cta"),
-        targetUrl: requiredText(value.target_url, "target_url")
+        creative_id: requiredText(value.creative_id, "creative.creative_id"),
+        creative_format: "banner_html",
+        html_url: requiredUrl(value.html_url, "creative.html_url"),
+        width: requiredPositiveInteger(value.width, "creative.width"),
+        height: requiredPositiveInteger(value.height, "creative.height"),
+        click_url: requiredUrl(value.click_url, "creative.click_url"),
+        target_url: requiredUrl(value.target_url, "creative.target_url"),
+        sandbox
     };
 }
 
-function normalizeTracking(value: Record<string, unknown>): ServedAdTracking {
-    const promotionChannel = requiredText(value.promotion_channel, "promotion_channel");
+function normalizeSandbox(value: unknown): BannerCreative["sandbox"] {
+    if (!isRecord(value)) {
+        throw new Error("LoopAdAdvertisementSDK received an invalid sandbox.");
+    }
+    if (value.allow_scripts !== true || value.allow_same_origin !== false) {
+        throw new Error("LoopAdAdvertisementSDK received unsupported sandbox flags.");
+    }
+    return {
+        allow_scripts: true,
+        allow_same_origin: false,
+        allow_popups: Boolean(value.allow_popups)
+    };
+}
 
+function normalizeAttribution(value: unknown): LoopAdAttribution {
+    if (!isRecord(value)) {
+        throw new Error("LoopAdAdvertisementSDK received invalid attribution.");
+    }
+    const promotionChannel = requiredText(value.promotion_channel, "attribution.promotion_channel");
     if (promotionChannel !== "onsite_banner") {
         throw new Error(
             `LoopAdAdvertisementSDK received unsupported promotion_channel '${promotionChannel}'.`
         );
     }
-
-    return {
-        project_id: requiredText(value.project_id, "project_id"),
-        user_id: requiredText(value.user_id, "user_id"),
-        campaign_id: requiredText(value.campaign_id, "campaign_id"),
-        promotion_id: requiredText(value.promotion_id, "promotion_id"),
-        promotion_run_id: requiredText(value.promotion_run_id, "promotion_run_id"),
-        ad_experiment_id: requiredText(value.ad_experiment_id, "ad_experiment_id"),
-        segment_id: requiredText(value.segment_id, "segment_id"),
-        content_id: requiredText(value.content_id, "content_id"),
-        content_option_id: requiredText(value.content_option_id, "content_option_id"),
-        promotion_channel: promotionChannel,
-        placement_id: requiredText(value.placement_id, "placement_id"),
-        target_url: requiredText(value.target_url, "target_url")
+    const attribution: LoopAdAttribution = {
+        project_id: requiredText(value.project_id, "attribution.project_id"),
+        campaign_id: requiredText(value.campaign_id, "attribution.campaign_id"),
+        promotion_id: requiredText(value.promotion_id, "attribution.promotion_id"),
+        promotion_run_id: requiredText(value.promotion_run_id, "attribution.promotion_run_id"),
+        ad_experiment_id: requiredText(value.ad_experiment_id, "attribution.ad_experiment_id"),
+        segment_id: requiredText(value.segment_id, "attribution.segment_id"),
+        content_id: requiredText(value.content_id, "attribution.content_id"),
+        content_option_id: requiredText(value.content_option_id, "attribution.content_option_id"),
+        creative_id: requiredText(value.creative_id, "attribution.creative_id"),
+        promotion_channel: "onsite_banner",
+        target_url: requiredUrl(value.target_url, "attribution.target_url")
     };
-}
+    const placementId = optionalText(value.placement_id);
+    const redirectId = optionalText(value.redirect_id);
 
-function apiErrorCode(value: unknown): string {
-    if (!isRecord(value) || !isRecord(value.error)) {
-        return "";
+    if (placementId) {
+        attribution.placement_id = placementId;
+    }
+    if (redirectId) {
+        attribution.redirect_id = redirectId;
     }
 
-    return optionalText(value.error.code);
+    return attribution;
 }
 
 function trimTrailingSlash(value: string): string {
     return value.replace(/\/+$/, "");
+}
+
+function requiredUrl(value: unknown, field: string): string {
+    const text = requiredText(value, field);
+    try {
+        const url = new URL(text);
+        if (url.protocol !== "http:" && url.protocol !== "https:") {
+            throw new Error("invalid protocol");
+        }
+        return text;
+    } catch {
+        throw new Error(`LoopAdAdvertisementSDK requires ${field} to be an HTTP URL.`);
+    }
+}
+
+function requiredPositiveInteger(value: unknown, field: string): number {
+    const numberValue = typeof value === "number" ? value : Number(value);
+    if (!Number.isInteger(numberValue) || numberValue <= 0) {
+        throw new Error(`LoopAdAdvertisementSDK requires ${field}.`);
+    }
+    return numberValue;
 }
 
 function requiredText(value: unknown, field: string): string {
@@ -428,6 +514,14 @@ function optionalText(value: unknown): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null;
+}
+
+function combineCleanups(...cleanups: Array<() => void>): () => void {
+    return () => {
+        for (const cleanup of cleanups) {
+            cleanup();
+        }
+    };
 }
 
 function noop(): void {}
