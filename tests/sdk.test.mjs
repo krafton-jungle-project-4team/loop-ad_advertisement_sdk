@@ -76,6 +76,43 @@ test("exports init and requests the banner resolve contract endpoint", async () 
     assert.equal(decision.attribution.creative_id, "content-1");
 });
 
+test("uses the explicit pseudonymous subject contract without user_id", async () => {
+    client = init({
+        apiBaseUrl: "https://dashboard.api.dev.loop-ad.org/api/",
+        projectId: "project-1",
+        subjectId:
+            "sub_15d6d4bda1882ae636a857db0c4932223a8d321d8020374cf9edcbb71f5e2963",
+        promotionRunId: "run-1"
+    });
+
+    await client.render({
+        placementId: "hero",
+        targetId: "loopad-main-banner"
+    });
+
+    const requestUrl = new URL(requests[0].url);
+    assert.equal(requestUrl.searchParams.get("user_id"), null);
+    assert.equal(
+        requestUrl.searchParams.get("subject_id"),
+        "sub_15d6d4bda1882ae636a857db0c4932223a8d321d8020374cf9edcbb71f5e2963"
+    );
+});
+
+test("rejects ambiguous advertisement identities", () => {
+    assert.throws(
+        () =>
+            init({
+                apiBaseUrl: "https://dashboard.api.dev.loop-ad.org/api/",
+                projectId: "project-1",
+                userId: "user-123",
+                subjectId:
+                    "sub_15d6d4bda1882ae636a857db0c4932223a8d321d8020374cf9edcbb71f5e2963",
+                promotionRunId: "run-1"
+            }),
+        /exactly one of userId or subjectId/
+    );
+});
+
 test("handles empty resolve responses by clearing the target without callbacks", async () => {
     target.appendChild(new FakeElement("span"));
     let loaded = 0;
