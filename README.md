@@ -113,6 +113,23 @@ if (decision.status === "empty") {
 }
 ```
 
+## Experimental pseudonymous identity
+
+고객사 내부 backend가 발급한 `sub_` 형식의 가명 식별자를 사용할 때는 `userId`
+대신 `subjectId`를 명시합니다. 두 값은 동시에 사용할 수 없습니다.
+
+```ts
+const ads = init({
+  apiBaseUrl: "https://dashboard.api.dev.loop-ad.org/api",
+  projectId: "hotel-client-a",
+  subjectId: subjectIssuedByCustomerBackend,
+  promotionRunId: "promotion-run-1"
+});
+```
+
+현재 Dashboard serving API에는 `subject_id` 조회가 연결되지 않았으므로 이 옵션은
+인터페이스와 데이터 경계를 검증하는 실험 브랜치 PoC이며 운영 serving 기능이 아닙니다.
+
 `render()`는 `GET {apiBaseUrl}/ad/banner/resolve`로 광고를 요청하고 Dashboard API의
 `{ requestId, data }` envelope에서 `data`를 unwrap해 반환합니다. 서버가
 `status: "empty"`를 반환하면 SDK는 빈 slot으로 처리합니다.
@@ -132,7 +149,8 @@ if (decision.status === "empty") {
 |---|---:|---|---|
 | `apiBaseUrl` | yes | 없음 | Dashboard API base URL. SDK는 여기에 `/ad/banner/resolve`를 붙여 요청합니다. |
 | `projectId` | yes | 없음 | 광고 요청을 보낸 서비스 식별자 |
-| `userId` | yes | 없음 | host application이 관리하는 사용자 식별자 |
+| `userId` | 조건부 | 없음 | 기존 host application 사용자 식별자. `subjectId`와 둘 중 하나만 지정 |
+| `subjectId` | 조건부 | 없음 | 고객사 backend가 발급한 가명 식별자. `userId`와 둘 중 하나만 지정 |
 | `promotionRunId` | yes | 없음 | Dashboard/Decision이 실행 중인 promotion run 식별자 |
 | `debug` | no | `false` | SDK 내부 디버그 옵션. 현재 렌더링 계약에는 영향이 없습니다. |
 

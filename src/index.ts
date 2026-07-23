@@ -1,7 +1,8 @@
 export interface InitOptions {
     apiBaseUrl: string;
     projectId: string;
-    userId: string;
+    userId?: string;
+    subjectId?: string;
     promotionRunId: string;
     debug?: boolean | null;
 }
@@ -147,7 +148,8 @@ class Runtime {
 interface NormalizedInitOptions {
     apiBaseUrl: string;
     projectId: string;
-    userId: string;
+    identityQueryName: "user_id" | "subject_id";
+    identityValue: string;
     promotionRunId: string;
     debug: boolean;
 }
@@ -163,16 +165,39 @@ interface NormalizedRenderOptions {
 function normalizeInitOptions(options: InitOptions): NormalizedInitOptions {
     const apiBaseUrl = trimTrailingSlash(requiredText(options?.apiBaseUrl, "apiBaseUrl"));
     const projectId = requiredText(options?.projectId, "projectId");
-    const userId = requiredText(options?.userId, "userId");
+    const identity = normalizeIdentity(options);
     const promotionRunId = requiredText(options?.promotionRunId, "promotionRunId");
 
     return {
         apiBaseUrl,
         projectId,
-        userId,
+        identityQueryName: identity.queryName,
+        identityValue: identity.value,
         promotionRunId,
         debug: options.debug ?? false
     };
+}
+
+function normalizeIdentity(options: InitOptions): {
+    queryName: "user_id" | "subject_id";
+    value: string;
+} {
+    const userId = optionalText(options?.userId);
+    const subjectId = optionalText(options?.subjectId);
+    if ((userId && subjectId) || (!userId && !subjectId)) {
+        throw new Error(
+            "LoopAdAdvertisementSDK requires exactly one of userId or subjectId."
+        );
+    }
+    if (subjectId) {
+        if (!/^sub_[0-9a-f]{64}$/.test(subjectId)) {
+            throw new Error(
+                "LoopAdAdvertisementSDK subjectId must be a sub_ prefixed SHA-256 digest."
+            );
+        }
+        return { queryName: "subject_id", value: subjectId };
+    }
+    return { queryName: "user_id", value: userId as string };
 }
 
 function normalizeRenderOptions(options: RenderOptions): NormalizedRenderOptions {
@@ -344,9 +369,9 @@ function buildBannerResolveUrl(
     const query = new URLSearchParams({
         project_id: config.projectId,
         promotion_run_id: config.promotionRunId,
-        user_id: config.userId,
         placement_id: options.placementId
     });
+    query.set(config.identityQueryName, config.identityValue);
 
     return `${config.apiBaseUrl}/ad/banner/resolve?${query.toString()}`;
 }
